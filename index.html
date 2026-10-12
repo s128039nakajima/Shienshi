@@ -70,6 +70,15 @@ nav button.on{color:var(--pri);font-weight:700}
 .choice.ng .k{background:var(--ng);color:#fff}
 .choices.small .choice{padding:9px 0;justify-content:center;font-size:18px}
 .choices.small{flex-direction:row}
+.crow{display:flex;gap:6px;align-items:stretch}
+.crow .choice{flex:1;min-width:0}
+.xbtn{flex:none;width:42px;border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--sub);font-size:15px;cursor:pointer;padding:0}
+.crow.out .choice{opacity:.42}
+.crow.out .choice .t,.crow.out .choice .k{text-decoration:line-through;text-decoration-thickness:2px;text-decoration-color:var(--ng)}
+.crow.out .xbtn{background:var(--ng-soft);color:var(--ng);border-color:var(--ng)}
+.choices.small .crow{flex:1;flex-direction:column}
+.choices.small .xbtn{width:100%;height:32px}
+.elimhint{font-size:11.5px;color:var(--sub);margin-top:6px;text-align:right}
 .result{border-radius:10px;padding:10px 12px;margin-top:12px;font-weight:700}
 .result.ok{background:var(--ok-soft);color:var(--ok)}
 .result.ng{background:var(--ng-soft);color:var(--ng)}
@@ -147,7 +156,8 @@ const DEF = () => ({
   wrong:{},              // g -> {n:誤答回数, t:最終日時}
   review:{},             // g -> 追加日時
   memo:{},               // g -> テキスト
-  current:null           // 回答中の状態 {qid, picked}
+  current:null,          // 回答中の状態 {qid, picked}
+  elim:null              // 消去法で除外中の選択肢 {qid, keys:[]}
 });
 let S;
 function load(){ try{ S = Object.assign(DEF(), JSON.parse(localStorage.getItem(SKEY)||"{}")); }catch(e){ S = DEF(); } }
@@ -261,8 +271,11 @@ function imgBlock(q){
   return `${open?`<div class="imgwrap" id="imgwrap"><img class="qimg" src="${src}" alt="問題の原本画像"></div><div class="imgnote">${must?(q.fig?"図表を含む問題のため原本画像を表示しています。":"文字の読み取り精度が低いため原本画像を表示しています。"):""}画像をタップで拡大／縮小</div>`:""}
   ${must?"":`<button class="linkbtn" id="imgToggle">${open?"▲ 原本画像を閉じる":"▼ 原本画像（PDF）を表示"}</button>`}`;
 }
+function elimKeys(q){ return S.elim && S.elim.qid===q.id ? S.elim.keys : []; }
 function questionHtml(q, picked){
   const answered = picked!=null;
+  const el = elimKeys(q);
+  const xb = k => answered ? "" : `<button class="xbtn" data-elim="${k}" aria-label="${k}を除外">${el.includes(k)?"↺":"✕"}</button>`;
   const g = q.g, occ = GROUP[g];
   const isRev = !!S.review[g];
   let ch;
@@ -270,11 +283,11 @@ function questionHtml(q, picked){
     ch = `<div class="choices">${q.ch.map((t,i)=>{
       const k=KEYS[i]; let cls="";
       if(answered){ if(k===q.ans) cls="ok"; else if(k===picked) cls="ng"; }
-      return `<button class="choice ${cls}" data-pick="${k}" ${answered?"disabled":""}><span class="k">${k}</span><span class="t">${esc(t)}</span></button>`;
-    }).join("")}</div>`;
+      return `<div class="crow ${el.includes(k)?"out":""}"><button class="choice ${cls}" data-pick="${k}" ${answered?"disabled":""}><span class="k">${k}</span><span class="t">${esc(t)}</span></button>${xb(k)}</div>`;
+    }).join("")}</div>${answered?"":`<div class="elimhint">✕ で「明らかに違う」選択肢を消せます（↺ で戻す）</div>`}`;
   } else {
     ch = `<div class="choices small">${KEYS.map(k=>{ let cls=""; if(answered){ if(k===q.ans) cls="ok"; else if(k===picked) cls="ng"; }
-      return `<button class="choice ${cls}" data-pick="${k}" ${answered?"disabled":""}><span class="k">${k}</span></button>`; }).join("")}</div>`;
+      return `<div class="crow ${el.includes(k)?"out":""}"><button class="choice ${cls}" data-pick="${k}" ${answered?"disabled":""}><span class="k">${k}</span></button>${xb(k)}</div>`; }).join("")}</div>${answered?"":`<div class="elimhint">✕ で「明らかに違う」選択肢を消せます（↺ で戻す）</div>`}`;
   }
   let res = "";
   if(answered){
@@ -301,7 +314,18 @@ function questionHtml(q, picked){
 }
 function bindQuestion(q, onPick){
   const app=$("#app");
-  app.querySelectorAll("[data-pick]").forEach(b=>b.onclick=()=>onPick(b.dataset.pick));
+  app.querySelectorAll("[data-pick]").forEach(b=>b.onclick=()=>{
+    if(elimKeys(q).includes(b.dataset.pick)){ toast("除外中の選択肢です（↺ で戻せます）"); return; }
+    onPick(b.dataset.pick);
+  });
+  app.querySelectorAll("[data-elim]").forEach(b=>b.onclick=()=>{
+    const k=b.dataset.elim;
+    if(!S.elim || S.elim.qid!==q.id) S.elim={qid:q.id, keys:[]};
+    const ks=S.elim.keys, i=ks.indexOf(k);
+    if(i>=0) ks.splice(i,1); else ks.push(k);
+    save();
+    const on=ks.includes(k); b.closest(".crow").classList.toggle("out",on); b.textContent=on?"↺":"✕";
+  });
   if($("#imgwrap")) $("#imgwrap").onclick=()=>$("#imgwrap").classList.toggle("zoom");
   if($("#imgToggle")) $("#imgToggle").onclick=()=>{ SHOWIMG=!SHOWIMG; const y=window.scrollY; (VIEW==="single"?viewSingle:viewQuiz)(); window.scrollTo(0,y); };
   $("#revBtn").onclick=()=>{ if(S.review[q.g]) delete S.review[q.g]; else S.review[q.g]=Date.now(); save(); renderNav(); const on=!!S.review[q.g]; $("#revBtn").classList.toggle("on",on); $("#revBtn").textContent=on?"★ 再確認に登録済み":"☆ 再確認に追加"; toast(on?"再確認リストに追加しました":"再確認リストから外しました"); };
